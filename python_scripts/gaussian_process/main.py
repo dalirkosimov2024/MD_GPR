@@ -190,11 +190,18 @@ def gp():
 
             print(f"Iteration {i+1}: next_point = {next_point}, value = {new_y:.6f}")
 
+
+
+            print(f"Writing potential with b:{next_point[0]}, Z={next_point[1]}")
+            potential_writer(b=next_point[0], Z=next_point[1])
+    
         return x_train, y_train
 
     # Run Bayesian optimization with direct peak search
-    x_train_final, y_train_final = bayesian_optimization(
+    x_train, y_train = bayesian_optimization(
         gpr, x_train, y_train, num_iter=10, acquisition='peak')
+    
+
     
 
     
@@ -306,14 +313,14 @@ def potential_writer(b, Z):
 
 
     r, V, F = calculator(
-                    b=1.3,
-                    Z=2,
+                    b=b,
+                    Z=Z,
                     )
     plt.show()
     writeup("veff.table", r, V, F)
 
 
 if __name__ == "__main__":
-    potential_writer(b=1.3, Z=2)
+    gp()
 
 
