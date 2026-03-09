@@ -197,3 +197,123 @@ def gp():
         gpr, x_train, y_train, num_iter=10, acquisition='peak')
     
 
+    
+def potential_writer(b, Z):
+    import numpy as np
+    from numpy import exp, pi, sqrt
+    import matplotlib.pyplot as plt
+    import datetime
+
+    def calculator(b,Z):
+
+        #b = 1.323 #A-1
+        Z_C = 6
+        A = 14.400778
+        T_e = 5000 #K
+        e = 1 
+        n_i = 0.12755 # A ^-3
+        n_e = Z*n_i
+        r_bohr = 0.529177210903 # A
+        r_s = (3/(4 * pi * n_e))**(1/3) / r_bohr
+        eps0 =  e**2 / (4*pi*A) # from simple rearraning
+        k_B = 8.617333262e-5 
+
+        E_F = 3.80998* (3*pi**2* n_e ) ** (2/3) # constant comes from conversion of hbar^2/2me into metal units
+        print(E_F)
+        T_F = E_F / k_B
+
+        T_q = T_F / (1.3251 - 0.1779 * sqrt(r_s))
+        #T_q = 2.3 * T_F
+
+        T_eff = (T_e **2 + T_q **2)**0.5
+
+        k_PW = sqrt( (e**2 * n_e) / (eps0 * k_B * T_eff))
+        k_TF =  sqrt( (3*e**2 * n_e) / (2* eps0 *E_F))
+        
+
+    
+        print(k_TF)
+        print(k_PW)
+
+
+        def PW_func(r):
+            return (A*Z**2)/ r * exp(-k_PW * r)
+        
+        def PW_SRR_func(r):
+            return (A*Z**2)/ r * exp(-k_PW * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
+            
+
+        def TF_SRR_func(r):
+            return (A*Z**2)/ r * exp(-k_TF * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
+        
+        def TF_func(r):
+            return (A*Z**2)/ r * exp(-k_TF * r)
+
+        
+        r_array = np.arange(0.001, 10, 0.001)
+
+        TF_array = np.array([])
+        TF_SRR_array = np.array([])
+        PW_array = np.array([])
+        PW_SRR_array = np.array([])
+
+        for r in r_array:
+            TF = TF_func(r)
+            TF_SRR = TF_SRR_func(r)
+            PW  = PW_func(r)
+            PW_SRR = PW_SRR_func(r)
+            
+            TF_array = np.append(TF_array, TF)
+            TF_SRR_array = np.append(TF_SRR_array, TF_SRR)
+            PW_array = np.append(PW_array, PW)
+            PW_SRR_array = np.append(PW_SRR_array, PW_SRR)
+        
+
+
+        #plt.plot(r_array, TF_array, label="Thomas-Fermi", color="orange") 
+        #plt.plot(r_array, TF_SRR_array, linestyle = "--", color="orange", label="Thomas-Fermi + SRR") 
+        #plt.plot(r_array, PW_array, color = "green", label = "Perrot-Dharma-Wardana")
+
+
+        plt.plot(r_array, PW_SRR_array,label=f"Z= {Z},b={b}")
+        plt.suptitle(r"Pair potential, ionisation (Z) and short-range-repulsion wavevector (b) parameter scan (C-C, 5000 K, 0.914 Mbar, 2.429 $\rho$/$\rho_0$)")
+        
+        plt.ylim(0, 10)
+        plt.xlabel("r (angstrom)")
+        plt.ylabel("Energy (eV)")
+        plt.legend()
+        
+            
+
+
+        dr = r_array[1] - r_array[0]
+        F = -np.gradient(PW_SRR_array, dr)
+
+        return r_array, PW_SRR_array,  F
+
+    def writeup(filename, r, V, F):
+        
+        with open(filename, "w") as f:
+
+            f.write(f"# C-C, Z = {Z}, b={b}, {datetime.datetime.now()} \n")
+            f.write("MY_POTENTIAL\n")        # <-- table name used by pair_coeff
+            f.write(f"N {len(r)} R 0.001 7.999 \n\n")
+
+            for i in range(len(r)):
+                f.write("%d %f %f %f\n" % (i+1, r[i], V[i], F[i]))
+
+        print("LAMMPS table written to:", filename)
+
+
+    r, V, F = calculator(
+                    b=1.3,
+                    Z=2,
+                    )
+    plt.show()
+    writeup("veff.table", r, V, F)
+
+
+if __name__ == "__main__":
+    potential_writer(b=1.3, Z=2)
+
+
