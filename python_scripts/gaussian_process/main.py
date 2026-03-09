@@ -4,6 +4,7 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.gaussian_process import GaussianProcessRegressor
 from scipy.stats import norm
 import matplotlib.lines as mlines
+import subprocess
 
 
 def gp():
@@ -320,7 +321,18 @@ def potential_writer(b, Z):
     writeup("veff.table", r, V, F)
 
 
+
+def md_runner(rdf_name):
+    subprocess.run([
+        "lmp",
+    "-in", "test.in",
+    "-var", "rdf_file", rdf_name
+    ], check=True)
+
+
+
+
 if __name__ == "__main__":
-    gp()
+    md_runner("rdf")
 
 
