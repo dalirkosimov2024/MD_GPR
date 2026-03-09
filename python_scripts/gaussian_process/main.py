@@ -5,6 +5,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from scipy.stats import norm
 import matplotlib.lines as mlines
 import subprocess
+from scipy.interpolate import interp1d
 
 
 def gp():
@@ -330,9 +331,105 @@ def md_runner(rdf_name):
     ], check=True)
 
 
+def rdf_reader():
+
+    def dat_reader(filename):
+        data = np.loadtxt(filename, usecols=(0, 1))
+
+        r = data[:, 0]
+        g_r = data[:, 1]
+        label = "QMD (Hu et al. 2014)"
+
+        return r, g_r, label
+
+    def rdf_reader(filename):
+
+        current_x = []
+        current_y = []
+        current_ts = None
+
+        with open(filename, "r") as f:
+            for line in f:
+                line = line.strip()
+
+                if not line or line.startswith("#"):
+                    continue
+
+                parts = line.split()
+
+                # New timestep marker (2 values)
+                if len(parts) == 2:
+                    current_ts = int(parts[0])
+                    current_x = []
+                    current_y = []
+
+                # Data line (4 values)
+                elif len(parts) == 4:
+                    current_x.append(float(parts[1]))  # 2nd value -> r
+                    current_y.append(float(parts[2]))  # 3rd value -> g_r
+
+        # Convert to numpy arrays
+        r = np.array(current_x, dtype=float)
+        g_r = np.array(current_y, dtype=float)
+        label = "MD (Dalir)"
+
+        return r, g_r, label
+    
+
+    def chi2_gr(r_md, g_md, r_qmd, g_qmd):
+        
+        # Determine QMD cutoff
+        r_max = r_qmd[-1]
+
+        # Trim MD arrays to same cutoff
+        mask = r_md <= r_max
+        r_md_trim = r_md[mask]
+        g_md_trim = g_md[mask]
+
+        # Interpolate MD RDF onto QMD grid
+        interp_md = interp1d(r_md_trim, g_md_trim, kind="linear")
+        g_md_interp = interp_md(r_qmd)
+
+        # Compute mean squared difference
+        chi2 = np.mean((g_md_interp - g_qmd) ** 2)
+
+        return chi2
+
+
+    def plotter(r, g_r, label):
+
+        plt.plot(r, g_r, label = label, alpha = 0.3)
+        plt.xlim(0,4.9)
+        plt.title(r"Radial distribution function of C-C ions, 5000 K, 0.914 Mbar, 2.429 $\rho$/$\rho_0$)")
+        plt.xlabel(r"r (Angstrom)")
+        plt.ylabel(r"g$_{C-C}(r)$")
+        plt.legend()
+
+
+    filename1 = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-C_5000K.dat"
+    filename2 = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/yukawa_comparison/pw_srr_carbon-only.rdf"
+
+    r1, g_r1, label1 = dat_reader(filename1)
+    r2, g_r2, label2 = rdf_reader(filename2)
+
+    plotter(r1, g_r1, label1)
+    plotter(r2, g_r2, label2)
+
+    r_max = min(max(r2), max(r2))
+    print(r_max)
+
+    chi = chi2_gr(r2, g_r2, r1, g_r1)
+
+    print(f"Chi squared: {chi}")
+
+    plt.show()
+        
+
+
+
 
 
 if __name__ == "__main__":
-    md_runner("rdf")
+    rdf_reader()
 
 
