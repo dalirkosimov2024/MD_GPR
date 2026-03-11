@@ -6,51 +6,48 @@ from scipy.stats import norm
 import matplotlib.lines as mlines
 import subprocess
 from scipy.interpolate import interp1d
+from scipy.stats import qmc
+from scipy.signal import savgol_filter
+from scipy.spatial.distance import cdist
 
+def writeup(filename, b, Z, rmse):
+        with open(filename, "a") as f:
+            f.write(f"{b} {Z} {rmse}\n")
 
 def gp():
 
-
-    # =========================================================
-    # 2D Gaussian parameters
-    # =========================================================
-    A = 1.0
-    x0 = 2.0
-    y0 = 3.5
-    sigma_x = 0.25
-    sigma_y = 0.75
-
-    # =========================================================
-    # Define the 2D Gaussian peak function
-    # Domain:
-    #   x in [1, 3]
-    #   y in [1, 6]
-    # =========================================================
     def target_function(X):
-        x, y = X
-        return A * np.exp(
-            -(
-                ((x - x0) ** 2) / (2 * sigma_x ** 2)
-                + ((y - y0) ** 2) / (2 * sigma_y ** 2)
-            )
-        )
+        b, Z = X
+        potential_writer(b, Z)
+        md_runner()
+        rmse = rdf_reader(b, Z)
+        return rmse   # minimize this
 
     # =========================================================
-    # Generate a grid of points over the new domain
+    # Candidate grid
     # =========================================================
-    x = np.linspace(1, 3, 100)
-    y = np.linspace(1, 6, 100)
+    x = np.linspace(2, 12, 100)
+    y = np.linspace(0, 3, 100)
     X, Y = np.meshgrid(x, y)
-    Z = target_function([X, Y])
-
-    # Flatten the grid for predictions / candidate search
     xy = np.vstack([X.ravel(), Y.ravel()]).T
-    z = Z.ravel()
 
     # =========================================================
-    # Select the kernel and fit the Gaussian Process model
+    # Load initial training data
     # =========================================================
-    kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=[0.3, 0.8], length_scale_bounds=(1e-2, 1e2))
+    data = np.loadtxt("b_Z_list.txt")
+    x_train = data[:, :2]
+    y_train = data[:, 2]
+
+    print(f"x_train:\n{x_train}\ny_train:\n{y_train}")
+
+    # =========================================================
+    # GP model
+    # =========================================================
+    kernel = C(1.0, (1e-3, 1e3)) * RBF(
+        length_scale=[0.5, 0.5],
+        length_scale_bounds=(1e-2, 1e1)
+    )
+
     gpr = GaussianProcessRegressor(
         kernel=kernel,
         n_restarts_optimizer=10,
@@ -58,93 +55,61 @@ def gp():
         random_state=1
     )
 
-    # =========================================================
-    # Initial training points sampled from the new domain
-    # =========================================================
-    np.random.seed(1)
-    initial_indices = np.random.choice(len(xy), 10, replace=False)
-    x_train = xy[initial_indices]
-    y_train = z[initial_indices]
-
+    # Fit before BO starts
     gpr.fit(x_train, y_train)
 
     # =========================================================
     # Plotting function
     # =========================================================
-    def plot_gp(gpr, x_train, y_train, X, Y, Z, best_y, next_point, label, iteration):
-        xy_local = np.vstack([X.ravel(), Y.ravel()]).T
-        mean_prediction, std_prediction = gpr.predict(xy_local, return_std=True)
-        mean_prediction = mean_prediction.reshape(X.shape)
+    def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
+            xy_local = np.vstack([X.ravel(), Y.ravel()]).T
+            mean_prediction, std_prediction = gpr.predict(xy_local, return_std=True)
+            mean_prediction = mean_prediction.reshape(X.shape)
+            std_prediction = std_prediction.reshape(X.shape)
 
+            fig, ax = plt.subplots(figsize=(7, 5))
 
-        fig, ax = plt.subplots(figsize=(7, 5))
+            # GP mean contours
+            cs = ax.contourf(X, Y, mean_prediction, levels=10, cmap="viridis")
+            ax.contour(X, Y, mean_prediction, levels=10, colors="black", linewidths=0.5)
+            fig.colorbar(cs, ax=ax, orientation="vertical", pad=0.1, anchor=(0, 0.2),label="RMSE", shrink=0.3)
 
+            # Training points
+            ax.scatter(x_train[:, 0], x_train[:, 1], color="red", marker="x", s=50)
 
+            # Best point so far
+            best_idx = np.argmin(y_train)
+            ax.scatter(
+                x_train[best_idx, 0], x_train[best_idx, 1],
+                color="magenta", marker="*", s=120
+            )
 
-        # True function as filled contours
-        contour_true = ax.contourf(X, Y, Z, levels=30, cmap="viridis", alpha=0.75)
+            # Next point
+            ax.scatter(next_point[0], next_point[1], color="green", marker="o", s=80)
 
-        # GP mean contours
-        ax.contour(X, Y, mean_prediction, levels=10, colors="red", linestyles="--")
+            sample_line = mlines.Line2D([], [], color="red", marker="x", linestyle="none", label="Training points")
+            mean_line = mlines.Line2D([], [], color="red", linestyle="--", label="Posterior mean")
+            next_line = mlines.Line2D([], [], color="green", marker="o", linestyle="none", label="Next point")
+            best_line = mlines.Line2D([], [], color="magenta", marker="*", linestyle="none", label="Best RMSE so far")
 
-        # Training points
-        ax.scatter(x_train[:, 0], x_train[:, 1], color="blue", marker="x", s=50)
+            ax.legend(
+                handles=[sample_line, next_line, best_line],
+                bbox_to_anchor=(1, 1),
+                loc="upper left",
+            )
 
-        # Next point
-        ax.scatter(next_point[0], next_point[1], color="green", marker="o", s=80)
+      
+            ax.set_xlabel(r"Short-range-repulsion onset, b (A$^{-1}$)")
+            ax.set_ylabel("Ionisation, Z")
+            ax.set_xlim(2, 12)
+            ax.set_ylim(0, 3)
+            ax.set_aspect("equal")
+            plt.tight_layout()
+            plt.show()
 
-        # True peak
-        ax.scatter(x0, y0, color="cyan", marker="*", s=180)
-
-        truth_line = mlines.Line2D([], [], color="black", label="True Gaussian")
-        sample_line = mlines.Line2D([], [], color="blue", marker="x", linestyle="none", label="Training points")
-        mean_line = mlines.Line2D([], [], color="red", linestyle="--", label="Posterior mean")
-        next_line = mlines.Line2D([], [], color="green", marker="o", linestyle="none", label="Next point")
-        peak_line = mlines.Line2D([], [], color="cyan", marker="*", linestyle="none", label="True peak")
-
-        ax.legend(
-            handles=[truth_line, sample_line, mean_line, next_line, peak_line],
-            bbox_to_anchor=(1, 1),
-            loc="upper left",
-        )
-
-        cbar = plt.colorbar(contour_true, ax=ax, shrink=0.5)
-        cbar.set_label("Function value")
-
-        plt.suptitle(f"2D Gaussian fit with {label}, iteration {iteration}")
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_xlim(1, 3)
-        ax.set_ylim(1, 6)
-        ax.set_aspect("equal")
-        plt.tight_layout()
-        plt.show()
 
     # =========================================================
-    # Expected improvement for maximisation
-    # This searches for the peak by preferring points that could
-    # improve on the current best value.
-    # =========================================================
-    def expected_improvement(x_candidates, gpr, best_y, xi=0.01):
-        mean_prediction, std_prediction = gpr.predict(x_candidates.reshape(-1, 2), return_std=True)
-
-        std_prediction = np.maximum(std_prediction, 1e-12)
-        improvement = mean_prediction - best_y - xi
-        z = improvement / std_prediction
-        ei = improvement * norm.cdf(z) + std_prediction * norm.pdf(z)
-        return ei
-
-    # =========================================================
-    # Greedy peak-seeking acquisition:
-    # pick the point with the highest GP posterior mean
-    # This is the most direct "search for the peak" rule.
-    # =========================================================
-    def peak_acquisition(x_candidates, gpr):
-        mean_prediction, _ = gpr.predict(x_candidates.reshape(-1, 2), return_std=True)
-        return mean_prediction
-
-    # =========================================================
-    # Remove already-sampled points from candidate list
+    # Remove already-sampled points
     # =========================================================
     def mask_sampled_points(candidates, sampled_points, tol=1e-8):
         keep = np.ones(len(candidates), dtype=bool)
@@ -154,58 +119,87 @@ def gp():
         return keep
 
     # =========================================================
-    # Perform Bayesian optimization
-    # acquisition='peak' directly searches for the peak
-    # acquisition='ei' searches for improvement toward the peak
+    # Minimization acquisitions
     # =========================================================
-    def bayesian_optimization(gpr, x_train, y_train, num_iter=10, acquisition='peak'):
+    def expected_improvement_min(x_candidates, gpr, best_y, xi=0.01):
+        mu, sigma = gpr.predict(x_candidates, return_std=True)
+        sigma = np.maximum(sigma, 1e-12)
+
+        improvement = best_y - mu - xi
+        z = improvement / sigma
+        ei = improvement * norm.cdf(z) + sigma * norm.pdf(z)
+        return ei
+
+    def lower_confidence_bound(x_candidates, gpr, kappa=1.5):
+        mu, sigma = gpr.predict(x_candidates, return_std=True)
+        return mu - kappa * sigma   # minimize this
+
+
+    # =========================================================
+    # Bayesian optimization
+    # =========================================================
+    def bayesian_optimization(gpr, x_train, y_train, num_iter=10, acquisition='lcb'):
         for i in range(num_iter):
             keep_mask = mask_sampled_points(xy, x_train)
             candidate_points = xy[keep_mask]
 
-            best_y = np.max(y_train)
+            best_y = np.min(y_train)
 
             if acquisition == 'ei':
-                
-                scores = expected_improvement(candidate_points, gpr, best_y)
+                scores = expected_improvement_min(candidate_points, gpr, best_y)
                 next_point = candidate_points[np.argmax(scores)]
                 label = "expected improvement"
-            elif acquisition == 'peak':
-                scores = peak_acquisition(candidate_points, gpr)
-                next_point = candidate_points[np.argmax(scores)]
-                label = "peak search"
+            elif acquisition == 'lcb':
+                scores = lower_confidence_bound(candidate_points, gpr, kappa=1.5)
+                next_point = candidate_points[np.argmin(scores)]
+                label = "lower confidence bound"
+            elif acquisition == 'mean':
+                mu, _ = gpr.predict(candidate_points, return_std=True)
+                next_point = candidate_points[np.argmin(mu)]
+                label = "posterior mean"
             else:
-                raise ValueError("acquisition must be 'ei' or 'peak'")
+                raise ValueError("acquisition must be 'ei', 'lcb', or 'mean'")
 
-            # Evaluate the new point
+            print(f"next point: b={next_point[0]}, Z={next_point[1]}")
+
+            plot_gp(
+                gpr=gpr,
+                x_train=x_train,
+                y_train=y_train,
+                X=X,
+                Y=Y,
+                best_y=best_y,
+                next_point=next_point,
+                label=label,
+                iteration=i + 1
+            )
+
+            # Evaluate new point
             new_y = target_function(next_point)
 
-            # Add new point to training data
+            # Add to training set
             x_train = np.vstack([x_train, next_point])
             y_train = np.append(y_train, new_y)
 
-            # Retrain the GP
+            # Refit GP
             gpr.fit(x_train, y_train)
 
             # Plot results
-            plot_gp(gpr, x_train, y_train, X, Y, Z, best_y, next_point=next_point, label=label, iteration=i + 1)
-
-            print(f"Iteration {i+1}: next_point = {next_point}, value = {new_y:.6f}")
 
 
+            print(f"Iteration {i+1}: next_point = {next_point}, RMSE = {new_y:.6f}")
+            print(f"Best RMSE so far = {np.min(y_train):.6f}")
 
-            print(f"Writing potential with b:{next_point[0]}, Z={next_point[1]}")
-            potential_writer(b=next_point[0], Z=next_point[1])
-    
+            writeup("b_Z_list.txt", next_point[0], next_point[1], float(new_y))
+
         return x_train, y_train
 
-    # Run Bayesian optimization with direct peak search
     x_train, y_train = bayesian_optimization(
-        gpr, x_train, y_train, num_iter=10, acquisition='peak')
-    
+        gpr, x_train, y_train, num_iter=10, acquisition='lcb'
+    )
 
-    
-
+    return x_train, y_train
+       
     
 def potential_writer(b, Z):
     import numpy as np
@@ -238,12 +232,9 @@ def potential_writer(b, Z):
 
         k_PW = sqrt( (e**2 * n_e) / (eps0 * k_B * T_eff))
         k_TF =  sqrt( (3*e**2 * n_e) / (2* eps0 *E_F))
-        
-
-    
+            
         print(k_TF)
         print(k_PW)
-
 
         def PW_func(r):
             return (A*Z**2)/ r * exp(-k_PW * r)
@@ -251,13 +242,11 @@ def potential_writer(b, Z):
         def PW_SRR_func(r):
             return (A*Z**2)/ r * exp(-k_PW * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
             
-
         def TF_SRR_func(r):
             return (A*Z**2)/ r * exp(-k_TF * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
         
         def TF_func(r):
             return (A*Z**2)/ r * exp(-k_TF * r)
-
         
         r_array = np.arange(0.001, 10, 0.001)
 
@@ -277,12 +266,9 @@ def potential_writer(b, Z):
             PW_array = np.append(PW_array, PW)
             PW_SRR_array = np.append(PW_SRR_array, PW_SRR)
         
-
-
         #plt.plot(r_array, TF_array, label="Thomas-Fermi", color="orange") 
         #plt.plot(r_array, TF_SRR_array, linestyle = "--", color="orange", label="Thomas-Fermi + SRR") 
         #plt.plot(r_array, PW_array, color = "green", label = "Perrot-Dharma-Wardana")
-
 
         plt.plot(r_array, PW_SRR_array,label=f"Z= {Z},b={b}")
         plt.suptitle(r"Pair potential, ionisation (Z) and short-range-repulsion wavevector (b) parameter scan (C-C, 5000 K, 0.914 Mbar, 2.429 $\rho$/$\rho_0$)")
@@ -292,9 +278,6 @@ def potential_writer(b, Z):
         plt.ylabel("Energy (eV)")
         plt.legend()
         
-            
-
-
         dr = r_array[1] - r_array[0]
         F = -np.gradient(PW_SRR_array, dr)
 
@@ -313,7 +296,6 @@ def potential_writer(b, Z):
 
         print("LAMMPS table written to:", filename)
 
-
     r, V, F = calculator(
                     b=b,
                     Z=Z,
@@ -321,17 +303,55 @@ def potential_writer(b, Z):
     plt.show()
     writeup("veff.table", r, V, F)
 
-
-
-def md_runner(rdf_name):
+def md_runner():
     subprocess.run([
         "lmp",
     "-in", "test.in",
-    "-var", "rdf_file", rdf_name
+    "-var", "rdf_file", "rdf.rdf"
     ], check=True)
 
+def rdf_rmse(r_md, g_md, r_qmd, g_qmd):
+    # overlapping range
+    rmin = max(r_md.min(), r_qmd.min())
+    rmax = min(r_md.max(), r_qmd.max())
 
-def rdf_reader():
+    md_mask = (r_md >= rmin) & (r_md <= rmax)
+    qmd_mask = (r_qmd >= rmin) & (r_qmd <= rmax)
+
+    r = r_md[md_mask]
+    g_md = g_md[md_mask]
+
+    # interpolate QMD onto MD grid
+    g_qmd_interp = np.interp(r, r_qmd[qmd_mask], g_qmd[qmd_mask])
+
+    rmse = np.sqrt(np.mean((g_md - g_qmd_interp)**2))
+    return rmse
+
+def plotter(r, g_r, label,alpha=1):
+
+    plt.plot(r, g_r, label = label, alpha=alpha)
+
+
+    plt.xlabel(r"r (Angstrom)")
+    plt.ylabel(r"g(r)$")
+    plt.legend()
+
+def plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z):
+    title = f"RMSE = {round(float(rmsd), 3)}, b = {round(float(b),3)}" r" A$^{-3}$" f", Z = {round(float(Z),3)}"
+    #plotter(r_cc, g_cc, label_cc,alpha=alpha)
+    #plotter(r_ch, g_ch, label_ch,alpha=alpha)
+    #plotter(r_hh, g_hh, label_hh, alpha=alpha)
+    plotter(r_cc, g_total, label_total)
+    plotter(r_md, gr_md, label_md)
+    plt.suptitle(title)
+
+    plt.savefig(f"pics/b_{round(float(b), 3)}_Z_{round(float(Z),3)}.png")
+  
+
+    plt.show()
+    plt.close()
+
+def rdf_reader(b,Z):
 
     def dat_reader(filename):
         data = np.loadtxt(filename, usecols=(0, 1))
@@ -374,62 +394,46 @@ def rdf_reader():
         label = "MD (Dalir)"
 
         return r, g_r, label
-    
 
-    def chi2_gr(r_md, g_md, r_qmd, g_qmd):
+
+
+
+
+ 
+
+    g_cc = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-C_5000K.dat"
+    g_ch = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-H_5000K.dat"
+    g_hh = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_H-H_5000K.dat"
+    filename_md = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/python_scripts/gaussian_process/rdf.rdf"
+
+    alpha = 0.3
+
+    label_cc = "QMD C-C"
+    label_ch = "QMD C-H"
+    label_hh = "QMD H"
+
+    r_cc, g_cc, label1 = dat_reader(g_cc)
+    r_ch, g_ch, label1 = dat_reader(g_ch)
+    r_hh, g_hh, label1 = dat_reader(g_hh)
+
+    r_md, gr_md, label_md = rdf_reader(filename_md)
+
+    g_total = (1/3)*g_cc + (1/3)*g_ch + (1/3)*g_hh
+    label_total = "Total QMD"
+
+    r_md, gr_md = r_md[r_md <= 5], gr_md[r_md <= 5]
+    gr_md = savgol_filter(gr_md, 15, 3)
+
+    rmsd = rdf_rmse(r_md, gr_md, r_cc, g_total)
+
+    plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z)
+    writeup("b_Z_list.txt", b, Z, rmsd)
+
+    return rmsd
+
+
         
-        # Determine QMD cutoff
-        r_max = r_qmd[-1]
-
-        # Trim MD arrays to same cutoff
-        mask = r_md <= r_max
-        r_md_trim = r_md[mask]
-        g_md_trim = g_md[mask]
-
-        # Interpolate MD RDF onto QMD grid
-        interp_md = interp1d(r_md_trim, g_md_trim, kind="linear")
-        g_md_interp = interp_md(r_qmd)
-
-        # Compute mean squared difference
-        chi2 = np.mean((g_md_interp - g_qmd) ** 2)
-
-        return chi2
-
-
-    def plotter(r, g_r, label):
-
-        plt.plot(r, g_r, label = label, alpha = 0.3)
-        plt.xlim(0,4.9)
-        plt.title(r"Radial distribution function of C-C ions, 5000 K, 0.914 Mbar, 2.429 $\rho$/$\rho_0$)")
-        plt.xlabel(r"r (Angstrom)")
-        plt.ylabel(r"g$_{C-C}(r)$")
-        plt.legend()
-
-
-    filename1 = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-C_5000K.dat"
-    filename2 = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/yukawa_comparison/pw_srr_carbon-only.rdf"
-
-    r1, g_r1, label1 = dat_reader(filename1)
-    r2, g_r2, label2 = rdf_reader(filename2)
-
-    plotter(r1, g_r1, label1)
-    plotter(r2, g_r2, label2)
-
-    r_max = min(max(r2), max(r2))
-    print(r_max)
-
-    chi = chi2_gr(r2, g_r2, r1, g_r1)
-
-    print(f"Chi squared: {chi}")
-
-    plt.show()
-        
-
-
-
-
-
 if __name__ == "__main__":
-    rdf_reader()
+    gp()
 
 
