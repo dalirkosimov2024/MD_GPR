@@ -1,4 +1,5 @@
 import numpy as np
+from numpy import pi, sqrt, exp
 import matplotlib.pyplot as plt
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -9,208 +10,147 @@ from scipy.interpolate import interp1d
 from scipy.stats import qmc
 from scipy.signal import savgol_filter
 from scipy.spatial.distance import cdist
+import datetime
+
+def target_function(X):
+    b, Z = X
+    potential_writer(b, Z)
+    md_runner()
+    rmse = rdf_generator(b, Z)
+    return rmse   
 
 def writeup(filename, b, Z, rmse):
         with open(filename, "a") as f:
             f.write(f"{b} {Z} {rmse}\n")
 
-def gp():
+def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
+        xy_local = np.vstack([X.ravel(), Y.ravel()]).T
+        mean_prediction, std_prediction = gpr.predict(xy_local, return_std=True)
+        mean_prediction = mean_prediction.reshape(X.shape)
+        std_prediction = std_prediction.reshape(X.shape)
 
-    def target_function(X):
-        b, Z = X
-        potential_writer(b, Z)
-        md_runner()
-        rmse = rdf_reader(b, Z)
-        return rmse   # minimize this
+        fig, ax = plt.subplots(figsize=(7, 5))
 
-    # =========================================================
-    # Candidate grid
-    # =========================================================
-    x = np.linspace(2, 12, 100)
-    y = np.linspace(0, 3, 100)
-    X, Y = np.meshgrid(x, y)
-    xy = np.vstack([X.ravel(), Y.ravel()]).T
+        # GP mean contours
+        cs = ax.contourf(X, Y, mean_prediction, levels=10, cmap="viridis")
+        ax.contour(X, Y, mean_prediction, levels=10, colors="black", linewidths=0.5)
+        fig.colorbar(cs, ax=ax, orientation="vertical", pad=0.1, anchor=(0, 0.2),label="RMSE", shrink=0.3)
 
-    # =========================================================
-    # Load initial training data
-    # =========================================================
-    data = np.loadtxt("b_Z_list.txt")
-    x_train = data[:, :2]
-    y_train = data[:, 2]
+        # Training points
+        ax.scatter(x_train[:, 0], x_train[:, 1], color="red", marker="x", s=50)
 
-    print(f"x_train:\n{x_train}\ny_train:\n{y_train}")
+        # Best point so far
+        best_idx = np.argmin(y_train)
+        ax.scatter(
+            x_train[best_idx, 0], x_train[best_idx, 1],
+            color="magenta", marker="*", s=120
+        )
 
-    # =========================================================
-    # GP model
-    # =========================================================
-    kernel = C(1.0, (1e-3, 1e3)) * RBF(
-        length_scale=[0.5, 0.5],
-        length_scale_bounds=(1e-2, 1e1)
-    )
+        # Next point
+        ax.scatter(next_point[0], next_point[1], color="green", marker="o", s=80)
 
-    gpr = GaussianProcessRegressor(
-        kernel=kernel,
-        n_restarts_optimizer=10,
-        normalize_y=True,
-        random_state=1
-    )
+        sample_line = mlines.Line2D([], [], color="red", marker="x", linestyle="none", label="Training points")
+        mean_line = mlines.Line2D([], [], color="red", linestyle="--", label="Posterior mean")
+        next_line = mlines.Line2D([], [], color="green", marker="o", linestyle="none", label="Next point")
+        best_line = mlines.Line2D([], [], color="magenta", marker="*", linestyle="none", label="Best RMSE so far")
 
-    # Fit before BO starts
-    gpr.fit(x_train, y_train)
+        ax.legend(
+            handles=[sample_line, next_line, best_line],
+            bbox_to_anchor=(1, 1),
+            loc="upper left",
+        )
 
-    # =========================================================
-    # Plotting function
-    # =========================================================
-    def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
-            xy_local = np.vstack([X.ravel(), Y.ravel()]).T
-            mean_prediction, std_prediction = gpr.predict(xy_local, return_std=True)
-            mean_prediction = mean_prediction.reshape(X.shape)
-            std_prediction = std_prediction.reshape(X.shape)
+    
+        ax.set_xlabel(r"Short-range-repulsion onset, b (A$^{-1}$)")
+        ax.set_ylabel("Ionisation, Z")
+        ax.set_xlim(2, 12)
+        ax.set_ylim(0, 3)
+        ax.set_aspect("equal")
+        plt.tight_layout()
+        plt.show()
 
-            fig, ax = plt.subplots(figsize=(7, 5))
+def mask_sampled_points(candidates, sampled_points, tol=1e-8):
+    keep = np.ones(len(candidates), dtype=bool)
+    for i, c in enumerate(candidates):
+        if np.any(np.linalg.norm(sampled_points - c, axis=1) < tol):
+            keep[i] = False
+    return keep
 
-            # GP mean contours
-            cs = ax.contourf(X, Y, mean_prediction, levels=10, cmap="viridis")
-            ax.contour(X, Y, mean_prediction, levels=10, colors="black", linewidths=0.5)
-            fig.colorbar(cs, ax=ax, orientation="vertical", pad=0.1, anchor=(0, 0.2),label="RMSE", shrink=0.3)
+def expected_improvement_min(x_candidates, gpr, best_y, xi=0.01):
+    mu, sigma = gpr.predict(x_candidates, return_std=True)
+    sigma = np.maximum(sigma, 1e-12)
 
-            # Training points
-            ax.scatter(x_train[:, 0], x_train[:, 1], color="red", marker="x", s=50)
+    improvement = best_y - mu - xi
+    z = improvement / sigma
+    ei = improvement * norm.cdf(z) + sigma * norm.pdf(z)
+    return ei
 
-            # Best point so far
-            best_idx = np.argmin(y_train)
-            ax.scatter(
-                x_train[best_idx, 0], x_train[best_idx, 1],
-                color="magenta", marker="*", s=120
-            )
+def lower_confidence_bound(x_candidates, gpr, kappa=1.5):
+    mu, sigma = gpr.predict(x_candidates, return_std=True)
+    return mu - kappa * sigma   # minimize this
 
-            # Next point
-            ax.scatter(next_point[0], next_point[1], color="green", marker="o", s=80)
+def bayesian_optimization(gpr,xy,x_train, y_train, X, Y, num_iter=10, acquisition='lcb'):
+    for i in range(num_iter):
+        keep_mask = mask_sampled_points(xy, x_train)
+        candidate_points = xy[keep_mask]
 
-            sample_line = mlines.Line2D([], [], color="red", marker="x", linestyle="none", label="Training points")
-            mean_line = mlines.Line2D([], [], color="red", linestyle="--", label="Posterior mean")
-            next_line = mlines.Line2D([], [], color="green", marker="o", linestyle="none", label="Next point")
-            best_line = mlines.Line2D([], [], color="magenta", marker="*", linestyle="none", label="Best RMSE so far")
+        best_y = np.min(y_train)
 
-            ax.legend(
-                handles=[sample_line, next_line, best_line],
-                bbox_to_anchor=(1, 1),
-                loc="upper left",
-            )
+        if acquisition == 'ei':
+            scores = expected_improvement_min(candidate_points, gpr, best_y)
+            next_point = candidate_points[np.argmax(scores)]
+            label = "expected improvement"
+        elif acquisition == 'lcb':
+            scores = lower_confidence_bound(candidate_points, gpr, kappa=1.5)
+            next_point = candidate_points[np.argmin(scores)]
+            label = "lower confidence bound"
+        elif acquisition == 'mean':
+            mu, _ = gpr.predict(candidate_points, return_std=True)
+            next_point = candidate_points[np.argmin(mu)]
+            label = "posterior mean"
+        else:
+            raise ValueError("acquisition must be 'ei', 'lcb', or 'mean'")
 
-      
-            ax.set_xlabel(r"Short-range-repulsion onset, b (A$^{-1}$)")
-            ax.set_ylabel("Ionisation, Z")
-            ax.set_xlim(2, 12)
-            ax.set_ylim(0, 3)
-            ax.set_aspect("equal")
-            plt.tight_layout()
-            plt.show()
+        print(f"next point: b={next_point[0]}, Z={next_point[1]}")
 
+        plot_gp(
+            gpr=gpr,
+            x_train=x_train,
+            y_train=y_train,
+            X=X,
+            Y=Y,
+            best_y=best_y,
+            next_point=next_point,
+            label=label,
+            iteration=i + 1
+        )
 
-    # =========================================================
-    # Remove already-sampled points
-    # =========================================================
-    def mask_sampled_points(candidates, sampled_points, tol=1e-8):
-        keep = np.ones(len(candidates), dtype=bool)
-        for i, c in enumerate(candidates):
-            if np.any(np.linalg.norm(sampled_points - c, axis=1) < tol):
-                keep[i] = False
-        return keep
+        # Evaluate new point
+        new_y = target_function(next_point)
 
-    # =========================================================
-    # Minimization acquisitions
-    # =========================================================
-    def expected_improvement_min(x_candidates, gpr, best_y, xi=0.01):
-        mu, sigma = gpr.predict(x_candidates, return_std=True)
-        sigma = np.maximum(sigma, 1e-12)
+        # Add to training set
+        x_train = np.vstack([x_train, next_point])
+        y_train = np.append(y_train, new_y)
 
-        improvement = best_y - mu - xi
-        z = improvement / sigma
-        ei = improvement * norm.cdf(z) + sigma * norm.pdf(z)
-        return ei
-
-    def lower_confidence_bound(x_candidates, gpr, kappa=1.5):
-        mu, sigma = gpr.predict(x_candidates, return_std=True)
-        return mu - kappa * sigma   # minimize this
-
-
-    # =========================================================
-    # Bayesian optimization
-    # =========================================================
-    def bayesian_optimization(gpr, x_train, y_train, num_iter=10, acquisition='lcb'):
-        for i in range(num_iter):
-            keep_mask = mask_sampled_points(xy, x_train)
-            candidate_points = xy[keep_mask]
-
-            best_y = np.min(y_train)
-
-            if acquisition == 'ei':
-                scores = expected_improvement_min(candidate_points, gpr, best_y)
-                next_point = candidate_points[np.argmax(scores)]
-                label = "expected improvement"
-            elif acquisition == 'lcb':
-                scores = lower_confidence_bound(candidate_points, gpr, kappa=1.5)
-                next_point = candidate_points[np.argmin(scores)]
-                label = "lower confidence bound"
-            elif acquisition == 'mean':
-                mu, _ = gpr.predict(candidate_points, return_std=True)
-                next_point = candidate_points[np.argmin(mu)]
-                label = "posterior mean"
-            else:
-                raise ValueError("acquisition must be 'ei', 'lcb', or 'mean'")
-
-            print(f"next point: b={next_point[0]}, Z={next_point[1]}")
-
-            plot_gp(
-                gpr=gpr,
-                x_train=x_train,
-                y_train=y_train,
-                X=X,
-                Y=Y,
-                best_y=best_y,
-                next_point=next_point,
-                label=label,
-                iteration=i + 1
-            )
-
-            # Evaluate new point
-            new_y = target_function(next_point)
-
-            # Add to training set
-            x_train = np.vstack([x_train, next_point])
-            y_train = np.append(y_train, new_y)
-
-            # Refit GP
-            gpr.fit(x_train, y_train)
-
-            # Plot results
-
-
-            print(f"Iteration {i+1}: next_point = {next_point}, RMSE = {new_y:.6f}")
-            print(f"Best RMSE so far = {np.min(y_train):.6f}")
-
-            writeup("b_Z_list.txt", next_point[0], next_point[1], float(new_y))
-
-        return x_train, y_train
-
-    x_train, y_train = bayesian_optimization(
-        gpr, x_train, y_train, num_iter=10, acquisition='lcb'
-    )
+        # Refit GP
+        gpr.fit(x_train, y_train)
+        
+        print(f"Iteration {i+1}: next_point = {next_point}, RMSE = {new_y:.6f}")
+        print(f"Best RMSE so far = {np.min(y_train):.6f}")
+        writeup("b_Z_list.txt", next_point[0], next_point[1], float(new_y))
 
     return x_train, y_train
-       
-    
-def potential_writer(b, Z):
-    import numpy as np
-    from numpy import exp, pi, sqrt
-    import matplotlib.pyplot as plt
-    import datetime
 
-    def calculator(b,Z):
+def yukawa(r, Z, kappa, A = 14.400778):
+    return (A*Z**2)/ r * exp(-kappa * r)
+
+def yukawa_SRR(r, Z, kappa, b, Z_C = 7, A = 14.400778):
+    return (A*Z**2)/ r * exp(-kappa * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
+    
+#return x_train, y_train
+def calculator(b,Z):
 
         #b = 1.323 #A-1
-        Z_C = 6
         A = 14.400778
         T_e = 5000 #K
         e = 1 
@@ -235,18 +175,6 @@ def potential_writer(b, Z):
             
         print(k_TF)
         print(k_PW)
-
-        def PW_func(r):
-            return (A*Z**2)/ r * exp(-k_PW * r)
-        
-        def PW_SRR_func(r):
-            return (A*Z**2)/ r * exp(-k_PW * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
-            
-        def TF_SRR_func(r):
-            return (A*Z**2)/ r * exp(-k_TF * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
-        
-        def TF_func(r):
-            return (A*Z**2)/ r * exp(-k_TF * r)
         
         r_array = np.arange(0.001, 10, 0.001)
 
@@ -256,10 +184,10 @@ def potential_writer(b, Z):
         PW_SRR_array = np.array([])
 
         for r in r_array:
-            TF = TF_func(r)
-            TF_SRR = TF_SRR_func(r)
-            PW  = PW_func(r)
-            PW_SRR = PW_SRR_func(r)
+            TF = yukawa(r, Z, k_TF)
+            TF_SRR = yukawa_SRR(r, Z, k_TF,b)
+            PW  = yukawa(r, Z, k_PW)
+            PW_SRR = yukawa_SRR(r, Z, k_PW,b)
             
             TF_array = np.append(TF_array, TF)
             TF_SRR_array = np.append(TF_SRR_array, TF_SRR)
@@ -282,27 +210,7 @@ def potential_writer(b, Z):
         F = -np.gradient(PW_SRR_array, dr)
 
         return r_array, PW_SRR_array,  F
-
-    def writeup(filename, r, V, F):
-        
-        with open(filename, "w") as f:
-
-            f.write(f"# C-C, Z = {Z}, b={b}, {datetime.datetime.now()} \n")
-            f.write("MY_POTENTIAL\n")        # <-- table name used by pair_coeff
-            f.write(f"N {len(r)} R 0.001 7.999 \n\n")
-
-            for i in range(len(r)):
-                f.write("%d %f %f %f\n" % (i+1, r[i], V[i], F[i]))
-
-        print("LAMMPS table written to:", filename)
-
-    r, V, F = calculator(
-                    b=b,
-                    Z=Z,
-                    )
-    plt.show()
-    writeup("veff.table", r, V, F)
-
+    
 def md_runner():
     subprocess.run([
         "lmp",
@@ -331,7 +239,6 @@ def plotter(r, g_r, label,alpha=1):
 
     plt.plot(r, g_r, label = label, alpha=alpha)
 
-
     plt.xlabel(r"r (Angstrom)")
     plt.ylabel(r"g(r)$")
     plt.legend()
@@ -344,63 +251,86 @@ def plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z):
     plotter(r_cc, g_total, label_total)
     plotter(r_md, gr_md, label_md)
     plt.suptitle(title)
-
     plt.savefig(f"pics/b_{round(float(b), 3)}_Z_{round(float(Z),3)}.png")
-  
-
     plt.show()
     plt.close()
 
-def rdf_reader(b,Z):
+def dat_reader(filename):
+    data = np.loadtxt(filename, usecols=(0, 1))
 
-    def dat_reader(filename):
-        data = np.loadtxt(filename, usecols=(0, 1))
+    r = data[:, 0]
+    g_r = data[:, 1]
+    label = "QMD (Hu et al. 2014)"
 
-        r = data[:, 0]
-        g_r = data[:, 1]
-        label = "QMD (Hu et al. 2014)"
+    return r, g_r, label
 
-        return r, g_r, label
+def rdf_reader(filename):
 
-    def rdf_reader(filename):
+    current_x = []
+    current_y = []
+    current_ts = None
 
-        current_x = []
-        current_y = []
-        current_ts = None
+    with open(filename, "r") as f:
+        for line in f:
+            line = line.strip()
 
-        with open(filename, "r") as f:
-            for line in f:
-                line = line.strip()
+            if not line or line.startswith("#"):
+                continue
 
-                if not line or line.startswith("#"):
-                    continue
+            parts = line.split()
 
-                parts = line.split()
+            # New timestep marker (2 values)
+            if len(parts) == 2:
+                current_ts = int(parts[0])
+                current_x = []
+                current_y = []
 
-                # New timestep marker (2 values)
-                if len(parts) == 2:
-                    current_ts = int(parts[0])
-                    current_x = []
-                    current_y = []
+            # Data line (4 values)
+            elif len(parts) == 4:
+                current_x.append(float(parts[1]))  # 2nd value -> r
+                current_y.append(float(parts[2]))  # 3rd value -> g_r
 
-                # Data line (4 values)
-                elif len(parts) == 4:
-                    current_x.append(float(parts[1]))  # 2nd value -> r
-                    current_y.append(float(parts[2]))  # 3rd value -> g_r
+    # Convert to numpy arrays
+    r = np.array(current_x, dtype=float)
+    g_r = np.array(current_y, dtype=float)
+    label = "MD (Dalir)"
 
-        # Convert to numpy arrays
-        r = np.array(current_x, dtype=float)
-        g_r = np.array(current_y, dtype=float)
-        label = "MD (Dalir)"
+    return r, g_r, label
 
-        return r, g_r, label
+def gp():
+    x = np.linspace(2, 12, 100)
+    y = np.linspace(0, 3, 100)
+    X, Y = np.meshgrid(x, y)
+    xy = np.vstack([X.ravel(), Y.ravel()]).T
 
+    data = np.loadtxt("b_Z_list.txt")
+    x_train = data[:, :2]
+    y_train = data[:, 2]
 
+    print(f"x_train:\n{x_train}\ny_train:\n{y_train}")
 
+    kernel = C(1.0, (1e-3, 1e3)) * RBF(
+        length_scale=[0.5, 0.5],
+        length_scale_bounds=(1e-2, 1e1)
+    )
 
+    gpr = GaussianProcessRegressor(
+        kernel=kernel,
+        n_restarts_optimizer=10,
+        normalize_y=True,
+        random_state=1
+    )
 
- 
+    # Fit before BO starts
+    gpr.fit(x_train, y_train)
 
+    x_train, y_train = bayesian_optimization(
+        gpr, xy, x_train, y_train,X,Y, num_iter=10, acquisition='lcb'
+    )
+
+    return x_train, y_train
+
+def rdf_generator(b,Z):
     g_cc = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-C_5000K.dat"
     g_ch = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-H_5000K.dat"
     g_hh = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_H-H_5000K.dat"
@@ -431,9 +361,33 @@ def rdf_reader(b,Z):
 
     return rmsd
 
+def potential_writer( b, Z, filename="veff.table"):
+
+    r, V, F = calculator(
+                    b=b,
+                    Z=Z,
+                    )
+    
+    with open(filename, "w") as f:
+
+        f.write(f"# C-C, Z = {Z}, b={b}, {datetime.datetime.now()} \n")
+        f.write("MY_POTENTIAL\n")        # <-- table name used by pair_coeff
+        f.write(f"N {len(r)} R 0.001 7.999 \n\n")
+
+        for i in range(len(r)):
+            f.write("%d %f %f %f\n" % (i+1, r[i], V[i], F[i]))
+
+    print("LAMMPS table written to:", filename)
+
+    plt.show()
+    writeup("veff.table", r, V, F)
+
+
+def main():
+    gp()
 
         
 if __name__ == "__main__":
-    gp()
+    main()
 
 
