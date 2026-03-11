@@ -71,7 +71,8 @@ def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
         ax.set_ylim(0, 3)
         ax.set_aspect("equal")
         plt.tight_layout()
-        plt.show()
+        plt.savefig("pics/parameter_space.png")
+        plt.close()
 
 
 def mask_sampled_points(candidates, sampled_points, tol=1e-8):
@@ -203,7 +204,7 @@ def calculator(b,Z):
         plt.plot(r_array, TF_array, label="Thomas-Fermi", color="orange") 
         plt.plot(r_array, TF_SRR_array, linestyle = "--", color="orange", label="Thomas-Fermi + SRR") 
         plt.plot(r_array, PW_array, color = "green", label = "Perrot-Dharma-Wardana")
-        """
+        
 
         plt.plot(r_array, PW_SRR_array,label=f"Z= {Z},b={b}")
         plt.suptitle(r"Pair potential, ionisation (Z) and short-range-repulsion wavevector (b) parameter scan (C-C, 5000 K, 0.914 Mbar, 2.429 $\rho$/$\rho_0$)")
@@ -212,6 +213,7 @@ def calculator(b,Z):
         plt.xlabel("r (angstrom)")
         plt.ylabel("Energy (eV)")
         plt.legend()
+        """
         
         dr = r_array[1] - r_array[0]
         F = -np.gradient(PW_SRR_array, dr) # determines gradient of potential energy (Force)
@@ -258,7 +260,6 @@ def plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z):
     plotter(r_md, gr_md, label_md)
     plt.suptitle(title)
     plt.savefig(f"pics/b_{round(float(b), 3)}_Z_{round(float(Z),3)}.png")
-    plt.show()
     plt.close()
 
 def dat_reader(filename):
@@ -382,7 +383,6 @@ def potential_writer( b, Z, filename="veff.table"):
             f.write("%d %f %f %f\n" % (i+1, r[i], V[i], F[i]))
 
     print("LAMMPS table written to:", filename)
-    plt.show()
     writeup("veff.table", r, V, F)
 
 def main():
