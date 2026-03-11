@@ -1,3 +1,4 @@
+# imports 
 import numpy as np
 from numpy import pi, sqrt, exp
 import matplotlib.pyplot as plt
@@ -12,6 +13,7 @@ from scipy.signal import savgol_filter
 from scipy.spatial.distance import cdist
 import datetime
 
+# target function, outputs z axis fit 
 def target_function(X):
     b, Z = X
     potential_writer(b, Z)
@@ -19,10 +21,12 @@ def target_function(X):
     rmse = rdf_generator(b, Z)
     return rmse   
 
+# write b, Z and rmse text file
 def writeup(filename, b, Z, rmse):
         with open(filename, "a") as f:
             f.write(f"{b} {Z} {rmse}\n")
 
+# Plots gp contour
 def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
         xy_local = np.vstack([X.ravel(), Y.ravel()]).T
         mean_prediction, std_prediction = gpr.predict(xy_local, return_std=True)
@@ -32,12 +36,12 @@ def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
         fig, ax = plt.subplots(figsize=(7, 5))
 
         # GP mean contours
-        cs = ax.contourf(X, Y, mean_prediction, levels=10, cmap="viridis")
+        cs = ax.contourf(X, Y, mean_prediction, levels=10, cmap="viridis", alpha=0.6)
         ax.contour(X, Y, mean_prediction, levels=10, colors="black", linewidths=0.5)
-        fig.colorbar(cs, ax=ax, orientation="vertical", pad=0.1, anchor=(0, 0.2),label="RMSE", shrink=0.3)
+        fig.colorbar(cs, ax=ax, orientation="horizontal", pad=0.1,label="RMSE", shrink=0.3)
 
         # Training points
-        ax.scatter(x_train[:, 0], x_train[:, 1], color="red", marker="x", s=50)
+        ax.scatter(x_train[:, 0], x_train[:, 1], color="red", marker="x", s=30)
 
         # Best point so far
         best_idx = np.argmin(y_train)
@@ -55,7 +59,7 @@ def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
         best_line = mlines.Line2D([], [], color="magenta", marker="*", linestyle="none", label="Best RMSE so far")
 
         ax.legend(
-            handles=[sample_line, next_line, best_line],
+            handles=[sample_line, next_line],
             bbox_to_anchor=(1, 1),
             loc="upper left",
         )
@@ -69,12 +73,15 @@ def plot_gp(gpr, x_train, y_train, X, Y, best_y, next_point, label, iteration):
         plt.tight_layout()
         plt.show()
 
+
 def mask_sampled_points(candidates, sampled_points, tol=1e-8):
     keep = np.ones(len(candidates), dtype=bool)
     for i, c in enumerate(candidates):
         if np.any(np.linalg.norm(sampled_points - c, axis=1) < tol):
             keep[i] = False
     return keep
+
+
 
 def expected_improvement_min(x_candidates, gpr, best_y, xi=0.01):
     mu, sigma = gpr.predict(x_candidates, return_std=True)
@@ -84,6 +91,7 @@ def expected_improvement_min(x_candidates, gpr, best_y, xi=0.01):
     z = improvement / sigma
     ei = improvement * norm.cdf(z) + sigma * norm.pdf(z)
     return ei
+
 
 def lower_confidence_bound(x_candidates, gpr, kappa=1.5):
     mu, sigma = gpr.predict(x_candidates, return_std=True)
@@ -111,7 +119,7 @@ def bayesian_optimization(gpr,xy,x_train, y_train, X, Y, num_iter=10, acquisitio
         else:
             raise ValueError("acquisition must be 'ei', 'lcb', or 'mean'")
 
-        print(f"next point: b={next_point[0]}, Z={next_point[1]}")
+        print(f"Next point: b={next_point[0]}, Z={next_point[1]}")
 
         plot_gp(
             gpr=gpr,
@@ -135,47 +143,42 @@ def bayesian_optimization(gpr,xy,x_train, y_train, X, Y, num_iter=10, acquisitio
         # Refit GP
         gpr.fit(x_train, y_train)
         
-        print(f"Iteration {i+1}: next_point = {next_point}, RMSE = {new_y:.6f}")
+
         print(f"Best RMSE so far = {np.min(y_train):.6f}")
         writeup("b_Z_list.txt", next_point[0], next_point[1], float(new_y))
 
     return x_train, y_train
 
+# Yukawa function
 def yukawa(r, Z, kappa, A = 14.400778):
     return (A*Z**2)/ r * exp(-kappa * r)
 
+# Yukawa with short range repulsion correction 
 def yukawa_SRR(r, Z, kappa, b, Z_C = 7, A = 14.400778):
     return (A*Z**2)/ r * exp(-kappa * r) + (Z_C**2 - Z**2)*A/r * exp(-b*r)
     
-#return x_train, y_train
+# Calculates semi-classical pair-potential  
 def calculator(b,Z):
 
         #b = 1.323 #A-1
         A = 14.400778
         T_e = 5000 #K
-        e = 1 
+        e = 1 # normalised
         n_i = 0.12755 # A ^-3
         n_e = Z*n_i
         r_bohr = 0.529177210903 # A
-        r_s = (3/(4 * pi * n_e))**(1/3) / r_bohr
+        r_s = (3/(4 * pi * n_e))**(1/3) / r_bohr # from Gianluca
         eps0 =  e**2 / (4*pi*A) # from simple rearraning
-        k_B = 8.617333262e-5 
+        k_B = 8.617333262e-5 # metal units 
 
         E_F = 3.80998* (3*pi**2* n_e ) ** (2/3) # constant comes from conversion of hbar^2/2me into metal units
-        print(E_F)
         T_F = E_F / k_B
+        T_q = T_F / (1.3251 - 0.1779 * sqrt(r_s)) 
+        T_eff = (T_e **2 + T_q **2)**0.5 # from Gianluca
 
-        T_q = T_F / (1.3251 - 0.1779 * sqrt(r_s))
-        #T_q = 2.3 * T_F
+        k_PW = sqrt( (e**2 * n_e) / (eps0 * k_B * T_eff)) # Perrot Dharma-Wardana (finite temperature mapping)
+        k_TF =  sqrt( (3*e**2 * n_e) / (2* eps0 *E_F)) # thomas fermi screening 
 
-        T_eff = (T_e **2 + T_q **2)**0.5
-
-        k_PW = sqrt( (e**2 * n_e) / (eps0 * k_B * T_eff))
-        k_TF =  sqrt( (3*e**2 * n_e) / (2* eps0 *E_F))
-            
-        print(k_TF)
-        print(k_PW)
-        
         r_array = np.arange(0.001, 10, 0.001)
 
         TF_array = np.array([])
@@ -194,9 +197,13 @@ def calculator(b,Z):
             PW_array = np.append(PW_array, PW)
             PW_SRR_array = np.append(PW_SRR_array, PW_SRR)
         
-        #plt.plot(r_array, TF_array, label="Thomas-Fermi", color="orange") 
-        #plt.plot(r_array, TF_SRR_array, linestyle = "--", color="orange", label="Thomas-Fermi + SRR") 
-        #plt.plot(r_array, PW_array, color = "green", label = "Perrot-Dharma-Wardana")
+        # plots various potentials, use for comparison 
+
+        """
+        plt.plot(r_array, TF_array, label="Thomas-Fermi", color="orange") 
+        plt.plot(r_array, TF_SRR_array, linestyle = "--", color="orange", label="Thomas-Fermi + SRR") 
+        plt.plot(r_array, PW_array, color = "green", label = "Perrot-Dharma-Wardana")
+        """
 
         plt.plot(r_array, PW_SRR_array,label=f"Z= {Z},b={b}")
         plt.suptitle(r"Pair potential, ionisation (Z) and short-range-repulsion wavevector (b) parameter scan (C-C, 5000 K, 0.914 Mbar, 2.429 $\rho$/$\rho_0$)")
@@ -207,10 +214,11 @@ def calculator(b,Z):
         plt.legend()
         
         dr = r_array[1] - r_array[0]
-        F = -np.gradient(PW_SRR_array, dr)
+        F = -np.gradient(PW_SRR_array, dr) # determines gradient of potential energy (Force)
 
         return r_array, PW_SRR_array,  F
-    
+
+# runs LAMMPS remotely
 def md_runner():
     subprocess.run([
         "lmp",
@@ -218,33 +226,31 @@ def md_runner():
     "-var", "rdf_file", "rdf.rdf"
     ], check=True)
 
+# Calculates root mean squared difference 
 def rdf_rmse(r_md, g_md, r_qmd, g_qmd):
     # overlapping range
     rmin = max(r_md.min(), r_qmd.min())
     rmax = min(r_md.max(), r_qmd.max())
-
     md_mask = (r_md >= rmin) & (r_md <= rmax)
     qmd_mask = (r_qmd >= rmin) & (r_qmd <= rmax)
-
     r = r_md[md_mask]
     g_md = g_md[md_mask]
 
     # interpolate QMD onto MD grid
     g_qmd_interp = np.interp(r, r_qmd[qmd_mask], g_qmd[qmd_mask])
-
     rmse = np.sqrt(np.mean((g_md - g_qmd_interp)**2))
     return rmse
 
+# Plots MD g(r) and QMD g(r)
 def plotter(r, g_r, label,alpha=1):
-
     plt.plot(r, g_r, label = label, alpha=alpha)
-
     plt.xlabel(r"r (Angstrom)")
     plt.ylabel(r"g(r)$")
     plt.legend()
 
+# Saves the plot 
 def plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z):
-    title = f"RMSE = {round(float(rmsd), 3)}, b = {round(float(b),3)}" r" A$^{-3}$" f", Z = {round(float(Z),3)}"
+    title = f"RMSE = {round(float(rmsd), 3)}, b = {round(float(b),3)}" r" A$^{-3}$" f", Z = {round(float(Z),3)}" 
     #plotter(r_cc, g_cc, label_cc,alpha=alpha)
     #plotter(r_ch, g_ch, label_ch,alpha=alpha)
     #plotter(r_hh, g_hh, label_hh, alpha=alpha)
@@ -257,11 +263,9 @@ def plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z):
 
 def dat_reader(filename):
     data = np.loadtxt(filename, usecols=(0, 1))
-
     r = data[:, 0]
     g_r = data[:, 1]
     label = "QMD (Hu et al. 2014)"
-
     return r, g_r, label
 
 def rdf_reader(filename):
@@ -307,7 +311,6 @@ def gp():
     x_train = data[:, :2]
     y_train = data[:, 2]
 
-    print(f"x_train:\n{x_train}\ny_train:\n{y_train}")
 
     kernel = C(1.0, (1e-3, 1e3)) * RBF(
         length_scale=[0.5, 0.5],
@@ -331,6 +334,8 @@ def gp():
     return x_train, y_train
 
 def rdf_generator(b,Z):
+
+    # location of g(r) data
     g_cc = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-C_5000K.dat"
     g_ch = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_C-H_5000K.dat"
     g_hh = "/home/lcv510/Documents/cdt/york/lammps/LAMMPS/quantum_plasmas/pair_distribution_function/gr_H-H_5000K.dat"
@@ -348,19 +353,18 @@ def rdf_generator(b,Z):
 
     r_md, gr_md, label_md = rdf_reader(filename_md)
 
-    g_total = (1/3)*g_cc + (1/3)*g_ch + (1/3)*g_hh
+    # combines individual g(r) according to the weight (this assumes C = H )
+    g_total = (1/4)*g_cc + (1/2)*g_ch + (1/4)*g_hh
     label_total = "Total QMD"
-
     r_md, gr_md = r_md[r_md <= 5], gr_md[r_md <= 5]
     gr_md = savgol_filter(gr_md, 15, 3)
-
     rmsd = rdf_rmse(r_md, gr_md, r_cc, g_total)
-
     plot_saver(r_cc, g_total, r_md, gr_md, label_total, label_md, rmsd, b, Z)
     writeup("b_Z_list.txt", b, Z, rmsd)
 
     return rmsd
 
+# writes potential to a file LAMMPS can read
 def potential_writer( b, Z, filename="veff.table"):
 
     r, V, F = calculator(
@@ -378,15 +382,12 @@ def potential_writer( b, Z, filename="veff.table"):
             f.write("%d %f %f %f\n" % (i+1, r[i], V[i], F[i]))
 
     print("LAMMPS table written to:", filename)
-
     plt.show()
     writeup("veff.table", r, V, F)
 
-
 def main():
     gp()
-
-        
+     
 if __name__ == "__main__":
     main()
 
