@@ -60,7 +60,7 @@ def potential_writer( b, Z, kappa):
 
         f.write(f"# C-C, Z = {Z}, b={b}, kappa={kappa} - {datetime.datetime.now()} \n")
         f.write("MY_POTENTIAL\n")        # <-- table name used by pair_coeff
-        f.write(f"N {len(r)} R 0.001 7.999 \n\n")
+        f.write(f"N {len(r)} R 0.001 3.999 \n\n")
 
         for i in range(len(r)):
             f.write("%d %f %f %f\n" % (i+1, r[i], V[i], F[i]))

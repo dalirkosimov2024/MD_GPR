@@ -47,10 +47,10 @@ def lower_confidence_bound(x_candidates, gpr, kappa=1.5):
     mu, sigma = gpr.predict(x_candidates, return_std=True)
     return mu - kappa * sigma   # minimize this
 
-def bayesian_optimization(gpr,xy,x_train, y_train, X, Y, num_iter=10, acquisition='lcb'):
+def bayesian_optimization(gpr,xyz,x_train, y_train, X, Y, Z,num_iter=10, acquisition='lcb'):
     for i in range(num_iter):
-        keep_mask = mask_sampled_points(xy, x_train)
-        candidate_points = xy[keep_mask]
+        keep_mask = mask_sampled_points(xyz, x_train)
+        candidate_points = xyz[keep_mask]
 
         best_y = np.min(y_train)
 
@@ -68,8 +68,10 @@ def bayesian_optimization(gpr,xy,x_train, y_train, X, Y, num_iter=10, acquisitio
             label = "posterior mean"
         else:
             raise ValueError("acquisition must be 'ei', 'lcb', or 'mean'")
-
+    
+        print("\n....................\n")
         print(f"Next point: b={next_point[0]}, Z={next_point[1]}")
+        print("\n....................\n")
 
         plot_gp(
             gpr=gpr,
@@ -77,6 +79,7 @@ def bayesian_optimization(gpr,xy,x_train, y_train, X, Y, num_iter=10, acquisitio
             y_train=y_train,
             X=X,
             Y=Y,
+            Z=Z,
             best_y=best_y,
             next_point=next_point,
             label=label,
@@ -120,13 +123,13 @@ def gp():
     y_min, y_max = 0.0, 6.0
     z_min, z_max = 0.0, 12.0
 
-    x = np.linspace(x_min, x_max, 100)
-    y = np.linspace(y_min, y_max, 100)
+    x = np.linspace(x_min, x_max, 10)
+    y = np.linspace(y_min, y_max, 10)
     z = np.linspace(z_min, z_max, 100)
     X, Y,Z = np.meshgrid(x, y, z)
     xyz = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
 
-    lhc = True
+    lhc = False
     # If fewer than 4 points exist, generate the remaining ones with LHS
     if lhc:
         n_needed = 8
@@ -145,17 +148,22 @@ def gp():
         print(lhs_points)
         print("\n\n")
 
-    for value in lhs_points:
-        b = value[0]
-        Z = value[1]
-        kappa = value[2]
-        
-        rmse = target_function(b, Z, kappa)
-        writeup("values.txt", b, Z, kappa, rmse)
+        for value in lhs_points:
+            b = value[0]
+            Z = value[1]
+            kappa = value[2]
+            
+            rmse = target_function(b, Z, kappa)
+            writeup("values.txt", b, Z, kappa, rmse)
+
+   # read values.txt and output them
+   # x_train = b, Z , kappa
+   # y_train = rmse
+    x_train, y_train = value_reader()
         
 
     kernel = C(1.0, (1e-3, 1e3)) * RBF(
-        length_scale=[0.5, 0.5],
+        length_scale=[0.5, 0.5, 0.5],
         length_scale_bounds=(1e-2, 1e1)
     )
 
@@ -171,17 +179,13 @@ def gp():
 
     # Begin Bayesian optimization only after initial LHS phase is complete
     x_train, y_train = bayesian_optimization(
-        gpr, xyz, x_train, y_train, X, Y, num_iter=10, acquisition='lcb'
+        gpr, xyz, x_train, y_train, X, Y,Z, num_iter=10, acquisition='lcb'
     )
 
     return x_train, y_train
 
 def main():
     gp()
-
-def quick_run():
-    rmse = rdf_generator(b=6.97, Z = 0.455)
-    print(rmse)
      
 if __name__ == "__main__":
     main()

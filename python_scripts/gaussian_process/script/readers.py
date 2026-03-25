@@ -63,31 +63,33 @@ def rdf_generator(b,Z,kappa):
     
     # location of g(r) data
     path = Path.cwd()
-
-    g_cc = f"{path}/data/gr_C-C_5000K.dat"
-    g_ch = f"{path}/data/gr_C-H_5000K.dat"
-    g_hh = f"{path}/data/gr_H-H_5000K.dat"
+    g_total = f"{path}/data/gr_total_15000K.dat"
     filename_md = f"{path.parent}/rdf.rdf"
-
-    alpha = 0.4
-
-    label_cc = "QMD C-C"
-    label_ch = "QMD C-H"
-    label_hh = "QMD H-H"
-
-    r_cc, g_cc, label1 = dat_reader(g_cc)
-    r_ch, g_ch, label1 = dat_reader(g_ch)
-    r_hh, g_hh, label1 = dat_reader(g_hh)
+    r_cc, g_total, label = dat_reader(g_total)
 
     r_md, gr_md, label_md = rdf_reader(filename_md)
 
     # combines individual g(r) according to the weight (this assumes C = H)
-    g_total = (1/4)*g_cc + (1/2)*g_ch + (1/4)*g_hh
+
     label_total = "Total QMD"
     r_md, gr_md = r_md[r_md <= 5], gr_md[r_md <= 5]
     gr_md = savgol_filter(gr_md, 15, 3)
     rmse = rdf_rmse(r_md, gr_md, r_cc, g_total)
+
     plot_saver(r_cc, g_total, r_md, gr_md,
                 label_total, label_md, rmse, b, Z,kappa)
 
     return rmse
+
+def value_reader(filepath="values.txt"):
+    data = np.loadtxt(filepath)  # assumes no header
+
+    if data.shape[1] != 4:
+        raise ValueError("Expected 4 columns: x y z rmse")
+
+    X = data[:, :3]   # x, y, z
+    y = data[:, 3]    # rmse
+
+    return X, y
+
+
