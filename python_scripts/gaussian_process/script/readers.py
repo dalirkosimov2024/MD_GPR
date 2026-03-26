@@ -10,11 +10,12 @@ def dat_reader(filename):
     label = "QMD (Hu et al. 2014)"
     return r, g_r, label
 
-def rdf_reader(filename):
+def rdf_reader(filename, n_last=5):
+
+    rdf_blocks = []
 
     current_x = []
     current_y = []
-    current_ts = None
 
     with open(filename, "r") as f:
         for line in f:
@@ -25,21 +26,36 @@ def rdf_reader(filename):
 
             parts = line.split()
 
-            # New timestep marker (2 values)
             if len(parts) == 2:
-                current_ts = int(parts[0])
+                if current_x and current_y:
+                    rdf_blocks.append((
+                        np.array(current_x, dtype=float),
+                        np.array(current_y, dtype=float)
+                    ))
+
                 current_x = []
                 current_y = []
 
-            # Data line (4 values)
             elif len(parts) == 4:
-                current_x.append(float(parts[1]))  # 2nd value -> r
-                current_y.append(float(parts[2]))  # 3rd value -> g_r
+                current_x.append(float(parts[1]))
+                current_y.append(float(parts[2]))
 
-    # Convert to numpy arrays
-    r = np.array(current_x, dtype=float)
-    g_r = np.array(current_y, dtype=float)
-    label = "MD (Dalir)"
+    if current_x and current_y:
+        rdf_blocks.append((
+            np.array(current_x, dtype=float),
+            np.array(current_y, dtype=float)
+        ))
+
+    # Take last n blocks
+    last_blocks = rdf_blocks[-n_last:]
+
+    # Stack and average
+    r = last_blocks[0][0]  # assume same r grid
+    g_stack = np.array([block[1] for block in last_blocks])
+
+    g_r = np.mean(g_stack, axis=0)
+
+    label = f"MD (Dalir, avg last {n_last})"
 
     return r, g_r, label
 
@@ -91,5 +107,4 @@ def value_reader(filepath="values.txt"):
     y = data[:, 3]    # rmse
 
     return X, y
-
 
