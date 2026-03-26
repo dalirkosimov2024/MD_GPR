@@ -127,14 +127,14 @@ def gp():
 
     x = np.linspace(x_min, x_max, 10)
     y = np.linspace(y_min, y_max, 10)
-    z = np.linspace(z_min, z_max, 80)
+    z = np.linspace(z_min, z_max, 100)
     X, Y,Z = np.meshgrid(x, y, z)
     xyz = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
 
-    lhc = False
+    lhc = True
     # If fewer than 4 points exist, generate the remaining ones with LHS
     if lhc:
-        n_needed = 8
+        n_needed = 3
 
         sampler = qmc.LatinHypercube(d=3, seed=1)
         lhs_unit = sampler.random(n=n_needed)
@@ -155,13 +155,15 @@ def gp():
             Z = value[1]
             kappa = value[2]
             
-            rmse = target_function(b, Z, kappa)
+            rmse = target_function(value)
             writeup("values.txt", b, Z, kappa, rmse)
 
    # read values.txt and output them
    # x_train = b, Z , kappa
    # y_train = rmse
     x_train, y_train = value_reader()
+
+    print(f"\n\n{x_train},{y_train}\n\n")
         
 
     kernel = C(1.0, (1e-3, 1e3)) * RBF(

@@ -10,7 +10,7 @@ def dat_reader(filename):
     label = "QMD (Hu et al. 2014)"
     return r, g_r, label
 
-def rdf_reader(filename, n_last=5):
+def rdf_reader(filename, n_last=1):
 
     rdf_blocks = []
 
@@ -99,8 +99,8 @@ def rdf_generator(b,Z,kappa):
 def value_reader(filepath="values.txt"):
     data = np.loadtxt(filepath)  # assumes no header
 
-    if data.shape[1] != 4:
-        raise ValueError("Expected 4 columns: x y z rmse")
+    #if data.shape[1] != 4:
+    #    raise ValueError("Expected 4 columns: x y z rmse")
 
     X = data[:, :3]   # x, y, z
     y = data[:, 3]    # rmse
