@@ -13,7 +13,8 @@ from plots import *
 from readers import *
 
 # target function, outputs z axis fit 
-def target_function(b, Z, kappa):
+def target_function(X):
+    b, Z, kappa = X
     potential_writer(b, Z, kappa)
     md_runner()
     rmse = rdf_generator(b, Z, kappa)
@@ -70,7 +71,7 @@ def bayesian_optimization(gpr,xyz,x_train, y_train, X, Y, Z,num_iter=10, acquisi
             raise ValueError("acquisition must be 'ei', 'lcb', or 'mean'")
     
         print("\n....................\n")
-        print(f"Next point: b={next_point[0]}, Z={next_point[1]}")
+        print(f"Next point: b={next_point[0]}, Z={next_point[1]}, kappa = {next_point[2]}")
         print("\n....................\n")
 
         plot_gp(
@@ -95,10 +96,11 @@ def bayesian_optimization(gpr,xyz,x_train, y_train, X, Y, Z,num_iter=10, acquisi
 
         # Refit GP
         gpr.fit(x_train, y_train)
+
+
         
 
-        print(f"Best RMSE so far = {np.min(y_train):.6f}")
-        writeup("values.txt", next_point[0], next_point[1], float(new_y))
+        writeup("values.txt", next_point[0], next_point[1], next_point[2], float(new_y))
 
     return x_train, y_train
 
@@ -125,7 +127,7 @@ def gp():
 
     x = np.linspace(x_min, x_max, 10)
     y = np.linspace(y_min, y_max, 10)
-    z = np.linspace(z_min, z_max, 100)
+    z = np.linspace(z_min, z_max, 80)
     X, Y,Z = np.meshgrid(x, y, z)
     xyz = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
 
