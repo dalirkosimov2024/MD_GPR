@@ -89,7 +89,6 @@ def rdf_generator(b,Z,kappa):
 
     label_total = "Total QMD"
     r_md, gr_md = r_md[r_md <= 5], gr_md[r_md <= 5]
-    gr_md = savgol_filter(gr_md, 15, 3)
     rmse = rdf_rmse(r_md, gr_md, r_cc, g_total)
 
     plot_saver(r_cc, g_total, r_md, gr_md,
