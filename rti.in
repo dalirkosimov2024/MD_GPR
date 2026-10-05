@@ -1,0 +1,115 @@
+units metal
+atom_style atomic
+boundary p p p
+dimension 3
+
+read_data hydro_equil.dat
+#read_data rti_checkpoint_5.dat
+
+group sinwall type 1
+group above type 3
+group below type 4
+group fluids type 3 4
+group wall type 2
+
+pair_style hybrid table linear 9999 yukawa 3.0 5.0
+pair_coeff 3 3  table veff_light.table MY_POTENTIAL
+pair_coeff 3 4 table veff_light.table MY_POTENTIAL
+pair_coeff 4 4 table veff_light.table MY_POTENTIAL
+
+pair_coeff 1 1 yukawa 160
+pair_coeff 2 2 yukawa 160
+pair_coeff 1 2 yukawa 160
+pair_coeff 1 3 yukawa 160
+pair_coeff 1 4 yukawa 160
+pair_coeff 2 3 yukawa 160
+pair_coeff 2 4 yukawa 160
+
+
+fix freeze_wall wall setforce 0.0 0.0 0.0
+
+fix rw sinwall rigid single force 1 off on off torque * off off off
+
+delete_atoms group sinwall
+
+thermo 100
+thermo_style custom step temp press pe ke etotal
+
+dump mydump all atom 20000 outputs/rti_equil.output
+
+#---------------
+
+#compute totalRDF fluids rdf 300
+#fix 1 fluids ave/time 100 50 5000 c_totalRDF[*] file rti_drive_total.rdf mode vector
+
+#compute aboveRDF above rdf 300
+#fix 2 above ave/time 100 50 5000 c_aboveRDF[*] file rti_drive_heavy.rdf mode vector
+
+#compute belowRDF below rdf 300
+#fix 3 below ave/time 100 50 5000 c_belowRDF[*] file rti_drive_light.rdf mode vector
+
+
+#---------------
+
+#variable dy equal 3.0
+#compute ybins fluids chunk/atom bin/1d y lower ${dy} units box
+
+#fix rho fluids ave/chunk 20 1 20 ybins density/number file outputs/rti_rho_y_time.dat
+
+compute myTemp fluids temp
+fix TempOut fluids ave/time 100 1 10000 c_myTemp file outputs/rti_temp.dat mode scalar
+
+compute myPress all pressure myTemp
+fix PressOut all ave/time 100 1 10000 c_myPress file outputs/rti_press.dat mode scalar
+#---------------
+
+
+timestep 5e-5
+fix int fluids nve
+
+#-----------------
+
+variable gravity equal 0.005
+
+fix grav fluids gravity v_gravity vector 0 -1 0
+
+run 200000
+
+write_data outputs/rti_checkpoint_1.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_2.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_3.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_4.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_5.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_6.dat
+
+run 200000
+write_data outputs/rti_checkpoint_7.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_8.dat
+
+run 200000
+
+write_data outputs/rti_checkpoint_9.dat
+
+run 200000
+
+write_data outputs/rti_final.dat
+
+

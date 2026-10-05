@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=log                # Job name
+#SBATCH --partition=nodes               # What partition the job should run on
+#SBATCH --time=0-40:10:00               # Time limit (DD-HH:MM:SS)
+
+
+#SBATCH --ntasks=192                          		# Run a single task
+#SBATCH --cpus-per-task=1                    		# Number of CPU cores per task
+#SBATCH --distribution=cyclic:cyclic         		# Distribute tasks cyclically on nodes and sockets
+
+
+
+#SBATCH --account=pet-mhd-2020        # Project account to use
+#SBATCH --mail-type=END,FAIL            # Mail events (NONE, BEGIN, END, FAIL, ALL)
+#SBATCH --mail-user=dalir.kosimov@york.ac.uk   # Where to send mail
+#SBATCH --output=%x-%j.log              # Standard output log
+#SBATCH --error=%x-%j.err               # Standard error log
+
+# Abort if any command fails
+set -e
+
+# Purge any previously loaded modules
+module purge
+module load LAMMPS/29Aug2024-foss-2023b-kokkos
+
+mpiexec -n $SLURM_NTASKS lmp -in rti.in -sf opt
+
+
+
